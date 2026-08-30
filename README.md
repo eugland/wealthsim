@@ -19,9 +19,18 @@ ws.historical_quotes("AAPL", "1m")# daily price history
 ws.identity_id                    # your identity id (decoded from the token)
 ```
 
+## Install
+
 ```bash
-pip install curl_cffi playwright
+pip install wealthsim            # once published to PyPI
+# or, until then, straight from source:
+pip install git+https://github.com/eugland/wealthsim
+
+pip install "wealthsim[browser]"  # add Playwright for passkey/2FA browser login
 ```
+
+`curl_cffi` is a required dependency (installed automatically). Browser login additionally
+needs Playwright + your installed Chrome — hence the optional `[browser]` extra.
 
 ## Auth
 
@@ -163,7 +172,20 @@ python automate.py            # full end-to-end: login -> quote -> accounts -> a
 
 ## Prior art
 
-Endpoint shapes referenced from [`ws-api`](https://github.com/gboudreau/ws-api-python) (Guillaume Boudreau). This is a clean, focused reimplementation of the read-only path.
+Endpoint shapes referenced from [`ws-api`](https://github.com/gboudreau/ws-api-python) (Guillaume Boudreau) — a more feature-complete library with token auto-refresh. `wealthsim` is a smaller, flatter-typed, read-only alternative.
+
+## Contributing
+
+Contributions are welcome! Bug reports, new read-only endpoints, typing improvements, and docs
+fixes are all appreciated.
+
+1. Open an issue to discuss anything non-trivial first.
+2. Fork, branch, and keep changes focused and read-only (no order-placement endpoints — that's a
+   deliberate boundary of this project).
+3. Never commit credentials — `.env` and token files are gitignored; keep it that way.
+4. Match the existing style (plain-dict returns, one GraphQL call per method where possible).
+
+PRs and issues: https://github.com/eugland/wealthsim
 
 ## License
 
