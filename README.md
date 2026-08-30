@@ -1,5 +1,9 @@
 # wealthsim
 
+[![PyPI](https://img.shields.io/pypi/v/wealthsim.svg)](https://pypi.org/project/wealthsim/)
+[![Python](https://img.shields.io/pypi/pyversions/wealthsim.svg)](https://pypi.org/project/wealthsim/)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+
 **Unofficial Python client for Wealthsimple** — quotes, accounts, positions, activity. Read-only.
 
 > Not affiliated with or endorsed by Wealthsimple. Uses the private GraphQL API behind the web app. Automated access may violate Wealthsimple's terms — use at your own risk. No order placement, by design.
