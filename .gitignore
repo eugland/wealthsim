@@ -1,0 +1,21 @@
+# Credentials — NEVER commit. Holds live Wealthsimple access/refresh tokens.
+.env
+.env.*
+*.token
+tokens.json
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+.venv/
+venv/
+
+# Tooling
+.mypy_cache/
+.ruff_cache/
+.pytest_cache/
+.vscode/
+.idea/
