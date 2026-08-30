@@ -68,6 +68,87 @@ All methods are read-only and return plain dicts/lists. Create a client with
 
 All methods raise `WSError` on failure (`UNAUTHENTICATED` → token expired, re-login).
 
+## Examples
+
+Every call and a representative (redacted) result. Values below are illustrative.
+
+```python
+ws.me()
+# {'name': 'Jane Doe', 'email': 'jane@example.com',
+#  'identity_id': 'identity-XXXX', 'ownership_type': 'primary',
+#  'scope': 'read write', 'client_id': '4da5...', 'token_expired': False,
+#  'token_expires': '2026-08-30T14:12:46+00:00'}
+
+ws.quote("AAPL")
+# {'symbol': 'AAPL', 'name': 'Apple Inc', 'exchange': 'NASDAQ',
+#  'security_id': 'sec-s-...', 'market_status': 'CLOSED',
+#  'price': '319.9', 'bid': '320.02', 'ask': '320.15',
+#  'open': '317.08', 'high': '322.37', 'low': '315.45', 'close': '319.7',
+#  'prev_close': '319.7', 'volume': '28569783', 'change_pct': 0.06, 'currency': 'USD'}
+
+ws.security("AAPL")
+# {'symbol': 'AAPL', 'name': 'Apple Inc', 'security_id': 'sec-s-...',
+#  'marketCap': '4665765.74', 'peRatio': '36.65', 'eps': '8.72',
+#  'yield': '0.0033', 'high52Week': '344.57', 'low52Week': '225.95', ...}
+
+ws.security_info("AAPL")
+# {'symbol': 'AAPL', 'exchange': 'NASDAQ', 'dividend_frequency': 'QUARTERLY',
+#  'allowed_order_subtypes': ['MARKET', 'FRACTIONAL', 'LIMIT', 'STOP', ...],
+#  'mer': None, 'margin_rate': '0.3', 'beta': '1.0774', 'marketCap': '4665765.74', ...}
+
+ws.security_dividend("AAPL")
+# {'yield': '0.0033', 'frequency': 'QUARTERLY',
+#  'ex_dividend_date': None, 'record_date': None, 'payable_date': None}
+
+ws.historical_quotes("AAPL", "1m")
+# [{'price': '333.43', 'sessionPrice': None, 'timestamp': '2026-07-30T00:00:00.000Z', 'currency': 'USD'},
+#  ... 32 daily points ...]
+
+ws.accounts()
+# [{'id': 'tfsa-XXXX', 'type': 'SELF_DIRECTED_TFSA', 'nickname': None,
+#   'currency': 'CAD', 'status': 'open', 'value': '33576.54'},
+#  {'id': 'ca-cash-XXXX', 'type': 'CASH', 'nickname': 'Spending',
+#   'currency': 'CAD', 'status': 'open', 'value': '5178.99'}, ...]
+
+ws.positions()
+# [{'symbol': 'VFV', 'name': 'Vanguard S&P 500 ...', 'quantity': '3.89',
+#   'direction': 'BUY', 'book_value': '718.96', 'market_value': '742.44',
+#   'unrealized_pnl': '23.48', 'pct_of_account': '0.06', 'currency': 'CAD'}, ...]
+
+ws.net_worth()
+# {'net_value': '51076.05', 'net_deposits': '50658.42',
+#  'return_amount': '417.67', 'return_rate': '0.0082', 'currency': 'CAD'}
+
+ws.realized_returns()
+# {'total': '1430.08', 'currency': 'CAD',
+#  'by_security': [{'symbol': 'QQQU', 'amount': '1498.39'},
+#                  {'symbol': 'MSFT', 'amount': '149.51'}, ...]}
+
+ws.dividends()
+# {'total': '234.58', 'currency': 'CAD',
+#  'by_security': [{'symbol': 'QYLD', 'amount': '50.94'},
+#                  {'symbol': 'SDIV', 'amount': '35.06'}, ...]}
+
+ws.portfolio_history(days=90)
+# [{'date': '2026-06-01', 'value': '239.62'}, ...,
+#  {'date': '2026-08-29', 'value': '51067.24'}]   # 90 daily points
+
+ws.activities(5)
+# [{'occurredAt': '2026-08-25T...', 'type': 'CREDIT_CARD', 'subType': 'PAYMENT',
+#   'amount': '1619.16', 'amountSign': 'positive', 'currency': 'CAD',
+#   'assetSymbol': None, 'assetQuantity': None, 'status': 'COMPLETED'}, ...]
+
+ws.credit_card()
+# {'id': 'ca-credit-card-XXXX', 'creditLimit': 3000,
+#  'balance': {'current': '862.36', 'outstanding': '1074.30',
+#              'availableCreditLimit': '1925.70', 'pending': '211.94'},
+#  'currentCards': [{'cardNumber': '************1234', 'cardStatus': 'open',
+#                    'nameOnCard': 'JANE DOE', 'isLocked': False}]}
+
+ws.identity_id      # 'identity-XXXX'
+ws.token_claims     # {'sub': 'identity-XXXX', 'scope': 'read write', 'exp': 1788099166, ...}
+```
+
 ## CLI
 
 ```bash
