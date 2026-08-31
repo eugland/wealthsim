@@ -50,6 +50,14 @@ _ACTIVITIES_QUERY = (
     "      assetSymbol assetQuantity status } } } }"
 )
 
+_CORP_ACTION_QUERY = (
+    "query FetchCorporateActionChildActivities($activityCanonicalId: String!) {"
+    "  corporateActionChildActivities(activityCanonicalId: $activityCanonicalId) {"
+    "    nodes {"
+    "      occurredAt type subType amount amountSign currency"
+    "      assetSymbol assetQuantity status } } }"
+)
+
 _POSITIONS_QUERY = (
     "query FetchIdentityPositions($identityId: ID!, $currency: Currency!, $first: Int) {"
     "  identity(id: $identityId) {"
@@ -62,6 +70,26 @@ _POSITIONS_QUERY = (
     "            totalValue(currencyOverride: null) { amount currency }"
     "            unrealizedReturns(since: null) { amount currency }"
     "            security { id stock { symbol name primaryExchange } } } } } } } } }"
+)
+
+_ACCOUNT_UNREALIZED_PNL_QUERY = (
+    "query FetchAccountUnrealizedPnL($id: ID!, $currency: Currency!) {"
+    "  account(id: $id) {"
+    "    id financials {"
+    "      currentCombined(currency: $currency) {"
+    "        unrealizedPnL { amount rate currency } } } } }"
+)
+
+_ACCOUNT_BALANCES_QUERY = (
+    "query FetchAccountsWithBalance($ids: [String!]!, $type: CustodianAccountType) {"
+    "  accounts(ids: $ids, type: $type) {"
+    "    id custodianAccounts {"
+    "      financials { balance { securityId quantity } } } } }"
+)
+
+_SEC_SYMBOL_QUERY = (
+    "query FetchSecuritySymbol($id: ID!) {"
+    "  security(id: $id) { id stock { symbol name primaryExchange } } }"
 )
 
 _SECURITY_QUERY = (
@@ -139,6 +167,15 @@ _PORTFOLIO_HISTORY_QUERY = (
     "        edges { node { date netLiquidationValueV2 { amount currency } } } } } } }"
 )
 
+_ACCOUNT_HISTORY_QUERY = (
+    "query FetchAccountHistoricalFinancials("
+    "$id: ID!, $currency: Currency!, $startDate: Date, $first: Int) {"
+    "  account(id: $id) {"
+    "    id financials {"
+    "      historicalDaily(currency: $currency, startDate: $startDate, first: $first) {"
+    "        edges { node { date netLiquidationValueV2 { amount currency } } } } } } }"
+)
+
 _SEC_INFO_QUERY = (
     "query FetchSecurityMarketData($id: ID!) {"
     "  security(id: $id) {"
@@ -168,11 +205,22 @@ _CREDIT_CARD_QUERY = (
 
 
 class WSError(Exception):
-    """Any failure talking to Wealthsimple (bootstrap, login, OTP, GraphQL)."""
+    """Any failure talking to Wealthsimple (bootstrap, login, OTP, GraphQL).
+
+    ``response`` optionally carries the raw payload that triggered the error.
+    """
+
+    def __init__(self, message: str, response: Any = None) -> None:
+        super().__init__(message)
+        self.response = response
 
 
 class OTPRequired(WSError):
     """2FA code required — call login() again with otp=."""
+
+
+class LoginFailed(WSError):
+    """Authentication failed (bad credentials, rejected OTP, or refused token)."""
 
 
 class Session:
@@ -293,10 +341,44 @@ class Session:
             )
         return out
 
+    def account_balances(self, account_id: str) -> dict[str, Any]:
+        """Per-security balances for one account: ``{symbol_or_cash_code: quantity}``.
+
+        Cash legs (``sec-c-cad`` / ``sec-c-usd``) are returned by their code; every
+        other security id is resolved to its ticker symbol.
+        """
+        data = self._graphql(
+            "FetchAccountsWithBalance",
+            _ACCOUNT_BALANCES_QUERY,
+            {"ids": [account_id], "type": "TRADING"},
+        )
+        accounts = data.get("accounts") or []
+        if not accounts:
+            raise WSError(f"No account found for id {account_id!r}")
+        out: dict[str, Any] = {}
+        for custodian in accounts[0].get("custodianAccounts") or []:
+            for bal in ((custodian.get("financials") or {}).get("balance") or []):
+                sec = bal.get("securityId")
+                if sec not in ("sec-c-cad", "sec-c-usd"):
+                    sec = self.security_id_to_symbol(sec)
+                out[sec] = bal.get("quantity")
+        return out
+
     def activities(self, limit: int = 10) -> list[dict[str, Any]]:
         """Recent activity feed items (deposits, trades, etc.), newest first."""
         data = self._graphql("FetchActivityFeedItems", _ACTIVITIES_QUERY, {"first": limit})
         return [e["node"] for e in data["activityFeedItems"]["edges"]]
+
+    def corporate_action_activities(
+        self, activity_canonical_id: str
+    ) -> list[dict[str, Any]]:
+        """Child activities of a corporate action (e.g. the legs of a stock split)."""
+        data = self._graphql(
+            "FetchCorporateActionChildActivities",
+            _CORP_ACTION_QUERY,
+            {"activityCanonicalId": activity_canonical_id},
+        )
+        return (data.get("corporateActionChildActivities") or {}).get("nodes") or []
 
     def positions(self, currency: str = "CAD", limit: int = 50) -> list[dict[str, Any]]:
         """Your aggregated holdings: symbol, quantity, book/market value, unrealized P&L."""
@@ -325,6 +407,27 @@ class Session:
             )
         return out
 
+    def account_unrealized_pnl(
+        self, account_id: str, currency: str = "CAD"
+    ) -> dict[str, Any]:
+        """Combined unrealized P&L for one account: amount, rate, currency."""
+        data = self._graphql(
+            "FetchAccountUnrealizedPnL",
+            _ACCOUNT_UNREALIZED_PNL_QUERY,
+            {"id": account_id, "currency": currency},
+        )
+        acct = data.get("account")
+        if not acct:
+            raise WSError(f"No account found for id {account_id!r}")
+        pnl = (((acct.get("financials") or {}).get("currentCombined")) or {}).get(
+            "unrealizedPnL"
+        ) or {}
+        return {
+            "amount": pnl.get("amount"),
+            "rate": pnl.get("rate"),
+            "currency": pnl.get("currency") or currency,
+        }
+
     def security(self, symbol: str) -> dict[str, Any]:
         """Fundamentals for ``symbol``: market cap, P/E, EPS, yield, 52wk range, volume."""
         sec_id = self._resolve_security_id(symbol)
@@ -347,6 +450,33 @@ class Session:
             "FetchChartBarQuotes", _HIST_QUERY, {"id": sec_id, "period": period}
         )
         return data["security"]["chartBarQuotes"]
+
+    def search(self, query: str, limit: int = 10) -> list[dict[str, Any]]:
+        """Search securities by symbol or name. Returns up to ``limit`` matches:
+        symbol, name, exchange, security_id, buyable, status."""
+        data = self._graphql("FetchSecuritySearchResult", _SEARCH_QUERY, {"query": query})
+        out = []
+        for r in data["securitySearch"]["results"][:limit]:
+            stock = r.get("stock") or {}
+            out.append(
+                {
+                    "symbol": stock.get("symbol"),
+                    "name": stock.get("name"),
+                    "exchange": stock.get("primaryExchange"),
+                    "security_id": r.get("id"),
+                    "buyable": r.get("buyable"),
+                    "status": r.get("status"),
+                }
+            )
+        return out
+
+    def security_id_to_symbol(self, security_id: str) -> str:
+        """Reverse-lookup: resolve a WS ``sec-...`` id back to its ticker symbol."""
+        data = self._graphql("FetchSecuritySymbol", _SEC_SYMBOL_QUERY, {"id": security_id})
+        symbol = ((data.get("security") or {}).get("stock") or {}).get("symbol")
+        if not symbol:
+            raise WSError(f"No symbol found for security id {security_id!r}")
+        return symbol
 
     @property
     def token_claims(self) -> dict[str, Any]:
@@ -465,6 +595,28 @@ class Session:
             for e in edges
         ]
 
+    def account_history(
+        self, account_id: str, days: int = 90, currency: str = "CAD"
+    ) -> list[dict[str, Any]]:
+        """Daily net-liquidation-value series for one account over the last ``days``."""
+        start = (datetime.now(timezone.utc) - timedelta(days=days)).date().isoformat()
+        data = self._graphql(
+            "FetchAccountHistoricalFinancials",
+            _ACCOUNT_HISTORY_QUERY,
+            {"id": account_id, "currency": currency, "startDate": start, "first": days + 5},
+        )
+        acct = data.get("account")
+        if not acct:
+            raise WSError(f"No account found for id {account_id!r}")
+        edges = ((acct.get("financials") or {}).get("historicalDaily") or {}).get("edges") or []
+        return [
+            {
+                "date": e["node"]["date"],
+                "value": (e["node"].get("netLiquidationValueV2") or {}).get("amount"),
+            }
+            for e in edges
+        ]
+
     def security_info(self, symbol: str) -> dict[str, Any]:
         """Full security data: fundamentals, margin rate, MER, order subtypes, exchange."""
         sec_id = self._resolve_security_id(symbol)
@@ -562,7 +714,9 @@ def from_refresh_token(
         raise WSError(f"Refresh request failed: {exc}") from exc
     payload = resp.json()
     if "access_token" not in payload:
-        raise WSError(f"Refresh failed: {payload.get('error_description', payload)}")
+        raise LoginFailed(
+            f"Refresh failed: {payload.get('error_description', payload)}", response=payload
+        )
     return Session(http, payload["access_token"], device_id)
 
 
@@ -607,6 +761,8 @@ def login(
     if payload.get("error") == "invalid_grant" and otp is None:
         raise OTPRequired("2FA code required — call login() again with otp=<code>.")
     if "error" in payload or "access_token" not in payload:
-        raise WSError(f"Login failed: {payload.get('error_description', payload)}")
+        raise LoginFailed(
+            f"Login failed: {payload.get('error_description', payload)}", response=payload
+        )
 
     return Session(http, payload["access_token"], device_id)

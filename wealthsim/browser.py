@@ -9,21 +9,24 @@ Requires: pip install playwright   (uses your installed Chrome via channel="chro
 
 from __future__ import annotations
 
-import json
 from typing import Optional
 
 from curl_cffi import requests as _cffi
 
+from . import _store
 from .client import GRAPHQL_URL, Session, WSError
 
 
 def login_via_browser(
     cache_path: Optional[str] = ".env",
     timeout_sec: int = 180,
+    use_keyring: bool = True,
 ) -> Session:
     """Interactive passkey login. Returns an authed :class:`Session` (a.k.a. Client).
 
-    If ``cache_path`` is set, the captured tokens are written there as JSON for reuse.
+    Captured tokens are persisted for reuse: to the OS keyring by default (nothing
+    touches disk), or to ``cache_path`` as plaintext JSON if ``use_keyring`` is off or
+    keyring isn't installed.
     """
     try:
         from playwright.sync_api import sync_playwright
@@ -69,9 +72,7 @@ def login_via_browser(
     if "access_token" not in captured:
         raise WSError("No token captured — did login complete in the browser?")
 
-    if cache_path:
-        with open(cache_path, "w") as f:
-            json.dump(captured, f, indent=2)
+    _store.save_tokens(captured, cache_path=cache_path, use_keyring=use_keyring)
 
     return Session(
         _cffi.Session(),
@@ -80,10 +81,12 @@ def login_via_browser(
     )
 
 
-def load_cached(cache_path: str = ".env") -> Session:
-    """Build a Client from previously cached tokens. Raises if the file is missing."""
-    with open(cache_path) as f:
-        tok = json.load(f)
+def load_cached(cache_path: str = ".env", use_keyring: bool = True) -> Session:
+    """Build a Client from previously cached tokens (keyring first, then ``cache_path``).
+
+    Raises ``FileNotFoundError`` if neither backend has stored tokens.
+    """
+    tok = _store.load_tokens(cache_path=cache_path, use_keyring=use_keyring)
     return Session(
         _cffi.Session(),
         access_token=tok["access_token"],

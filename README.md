@@ -40,11 +40,33 @@ needs Playwright + your installed Chrome — hence the optional `[browser]` extr
 
 Wealthsimple has no public API and (for passkey/2FA accounts) can't be logged into headlessly.
 `login_via_browser()` opens your real Chrome, **you** complete the passkey, and it captures the
-access token from the first post-login request — then caches it to `.env` for reuse.
+access token from the first post-login request — then caches it for reuse.
 
 - `curl_cffi` (Chrome impersonation) is required — WS is behind Cloudflare TLS fingerprinting.
 - Access tokens expire (~1h); rerun `login_via_browser()` to refresh.
-- **`.env` holds a live account token in plaintext — never commit it.**
+
+### Secure token storage (keyring)
+
+A captured token can drain your account, so treat it like a password. By default tokens are
+stored in your **OS keyring** — Windows Credential Manager, macOS Keychain, or libsecret — and
+**nothing is written to disk**:
+
+```bash
+pip install "wealthsim[keyring]"
+```
+
+```python
+from wealthsim import login_via_browser, load_cached
+
+ws = login_via_browser()     # stores tokens in the OS keyring
+# next runs:
+ws = load_cached()           # reads from keyring first, then .env
+```
+
+If `keyring` isn't installed (or you pass `use_keyring=False`), storage falls back to a plaintext
+JSON file at `cache_path` (default `.env`) **with a warning**. In that case: **never commit `.env`**
+(it holds a live account token). Both `login_via_browser` and `load_cached` accept
+`use_keyring=` and `cache_path=`.
 
 ## API reference
 
@@ -66,20 +88,31 @@ All methods are read-only and return plain dicts/lists. Create a client with
 | `security_info(symbol)` | full: + beta, margin rate, MER, allowed order subtypes, revenue, shares |
 | `security_dividend(symbol)` | yield, frequency, ex-div / record / payable dates |
 | `historical_quotes(symbol, timerange="1m")` | price series; `timerange` ∈ `1d 1w 1m 3m 1y 5y` |
+| `search(query, limit=10)` | security search: symbol, name, exchange, security_id, buyable, status |
+| `security_id_to_symbol(security_id)` | reverse-lookup a `sec-...` id back to its ticker |
 
 ### Accounts & portfolio
 | Method | Returns |
 |---|---|
 | `accounts()` | every account: id, type, nickname, currency, status, value |
+| `account_balances(account_id)` | per-security balances for one account: `{symbol_or_cash: quantity}` |
 | `positions(currency="CAD")` | holdings: symbol, quantity, book/market value, unrealized P&L |
+| `account_unrealized_pnl(account_id, currency="CAD")` | combined unrealized P&L for one account: amount, rate |
 | `net_worth(currency="CAD")` | combined value, net deposits, simple return (amount + rate) |
 | `realized_returns(currency="CAD")` | total realized P&L + per-security breakdown |
 | `dividends(currency="CAD")` | total dividend income + per-security breakdown |
 | `portfolio_history(days=90, currency="CAD")` | daily net-worth series for charting |
+| `account_history(account_id, days=90, currency="CAD")` | daily value series for one account |
 | `activities(limit=10)` | recent feed items (deposits, trades, card, interest, dividends) |
+| `corporate_action_activities(activity_canonical_id)` | child activities of a corporate action (e.g. split legs) |
 | `credit_card()` | credit-card limit, balances, cards (or `None`) |
 
-All methods raise `WSError` on failure (`UNAUTHENTICATED` → token expired, re-login).
+### Errors
+
+All methods raise `WSError` on failure (`UNAUTHENTICATED` → token expired, re-login). Subclasses:
+`OTPRequired` (2FA code needed — call `login()` again with `otp=`) and `LoginFailed`
+(bad credentials / rejected OTP / refused token). `WSError.response` carries the raw payload
+when available. Catch `WSError` to handle them all.
 
 ## Examples
 
@@ -171,8 +204,37 @@ python run_env.py positions
 python run_env.py activities 10
 python run_env.py security TSLA
 python run_env.py history AAPL 3m
-python automate.py            # full end-to-end: login -> quote -> accounts -> activity
+python automate.py            # safe demo of EVERY method; personal values redacted to ***
 ```
+
+`automate.py` exercises all ~24 methods end-to-end but **redacts all personal data** (balances,
+account names, holdings, net worth, P&L, dividends, card) — only public market data prints in
+full, so its output is safe to share or screenshot.
+
+## Use from Claude (MCP)
+
+`wealthsim` ships an MCP server that exposes its read-only methods as tools, so Claude
+(Desktop or Code) can pull your quotes, holdings, and portfolio directly.
+
+```bash
+pip install "wealthsim[mcp]"
+python browser_auth.py     # log in once; token is cached (keyring by default)
+```
+
+Register the server — Claude Desktop (`claude_desktop_config.json`) or Claude Code (`.mcp.json`):
+
+```json
+{
+  "mcpServers": {
+    "wealthsim": { "command": "wealthsim-mcp" }
+  }
+}
+```
+
+Restart Claude; you'll get 17 read-only tools (`quote`, `search`, `accounts`, `positions`,
+`net_worth`, `portfolio_history`, `activities`, …). Auth reuses your cached token; there is no
+order-placement tool, by design. Run standalone with `wealthsim-mcp` (stdio) or
+`python -m wealthsim.mcp_server`.
 
 ## Prior art
 
@@ -191,6 +253,33 @@ fixes are all appreciated.
 
 PRs and issues: https://github.com/eugland/wealthsim
 
+## Disclaimer
+
+**This software is provided "as is", without warranty of any kind, express or implied.
+Use it entirely at your own risk.**
+
+- **Not affiliated.** `wealthsim` is an independent, unofficial project. It is not affiliated
+  with, authorized by, endorsed by, or in any way officially connected to Wealthsimple
+  Technologies Inc. or any of its subsidiaries. "Wealthsimple" and related marks are the
+  property of their respective owners; they are used here only to describe interoperability.
+- **Not financial, investment, tax, or legal advice.** This library moves data; it does not
+  advise. Nothing it returns is a recommendation to buy, sell, or hold any security.
+- **No warranty of accuracy.** Data comes from an undocumented private API that can change,
+  break, rate-limit, or return stale or incorrect values at any time. **Always verify against
+  the official Wealthsimple app before making any financial decision.**
+- **No liability.** To the maximum extent permitted by law, the author(s) are not liable for
+  any loss or damage — including financial loss, lost profits, missed trades, account
+  suspension, or data loss — arising from use of, or inability to use, this software.
+- **Terms of Service.** Automated access may violate Wealthsimple's Terms of Service. You are
+  solely responsible for ensuring your use complies with those terms and with all applicable
+  laws. The author does not encourage any violation of any third party's terms.
+- **Your credentials, your responsibility.** This project runs locally, stores no data on any
+  server operated by the author, and transmits nothing to the author. Safeguarding your own
+  tokens and account access is entirely your responsibility.
+
+By installing or using `wealthsim`, you acknowledge and accept the above.
+
 ## License
 
-MIT
+MIT — see [LICENSE](LICENSE). The MIT license's warranty disclaimer and limitation of
+liability apply to all use of this software.
